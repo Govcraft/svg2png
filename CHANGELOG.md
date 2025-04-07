@@ -1,6 +1,16 @@
 # CHANGELOG (svg2png)
 
 
+<a name="v0.1.5"></a>
+## [v0.1.5](https://github.com/Govcraft/svg2png/compare/v0.1.4...v0.1.5)
+
+> 2025-04-07
+
+### Bug Fixes
+
+* **font:** resolve font warnings in container
+
+
 <a name="v0.1.4"></a>
 ## [v0.1.4](https://github.com/Govcraft/svg2png/compare/v0.1.3...v0.1.4)
 
