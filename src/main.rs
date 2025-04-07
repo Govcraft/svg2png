@@ -106,7 +106,9 @@ async fn svg_to_png(
     // Note: `usvg::Options::dpi` is not used directly as its effect on scaling wasn't
     // clear from documentation at the time of writing. Manual scaling via `resvg::render`
     // transform is used instead for explicit control.
-    let opt = resvg::usvg::Options::default();
+    // Explicitly set options, ensuring the default font family is set.
+    let mut opt = resvg::usvg::Options::default();
+    opt.font_family = "Times New Roman".to_string(); // Explicitly set default font
     debug!(options = ?opt, "Parsing SVG data with default options");
     let tree = resvg::usvg::Tree::from_data(&body, &opt).map_err(|e| {
         error!(error = %e, "Invalid SVG data received");
