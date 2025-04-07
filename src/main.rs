@@ -6,7 +6,16 @@ use axum::{
     Router,
 };
 use tracing::{debug, error, info, instrument}; // Import tracing macros (removed warn)
-use tracing_subscriber::{fmt, prelude::*, EnvFilter}; // Import subscriber components
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+// --- Constants ---
+const HOST_ENV_VAR: &str = "HOST";
+const PORT_ENV_VAR: &str = "PORT";
+const DEFAULT_HOST: &str = "0.0.0.0";
+const DEFAULT_PORT: &str = "3000";
+const DPI_QUERY_PARAM: &str = "dpi";
+const PNG_CONTENT_TYPE: &str = "image/png";
+// --- End Constants ---
 
 // Handler to convert posted SVG to PNG, now accepting DPI query parameter via manual parsing
 #[instrument(skip(body))] // Correct placement of instrument macro
@@ -23,8 +32,8 @@ async fn svg_to_png(
 
     if let Some(query) = uri.query() {
         // Iterate over query parameters using form_urlencoded
-        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-            if key == "dpi" {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) { // Use form_urlencoded for parsing
+            if key == DPI_QUERY_PARAM { // Use constant for query param name
                 // Try to parse the value as f32
                 if let Ok(dpi_val) = value.parse::<f32>() {
                     // Use the parsed value if it's positive
@@ -142,7 +151,7 @@ async fn svg_to_png(
     // Logging completion is handled by the #[instrument] macro's exit event
     // Return the PNG as a response with appropriate headers
     Ok((
-        [(header::CONTENT_TYPE, "image/png")],
+        [(header::CONTENT_TYPE, PNG_CONTENT_TYPE)], // Use constant for content type
         png_buffer,
     ))
 }
@@ -170,9 +179,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Initializing server {} v{}...", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
-    // Read host and port from environment variables with defaults
-    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port_str = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    // Read host and port from environment variables with defaults, using constants
+    let host = std::env::var(HOST_ENV_VAR).unwrap_or_else(|_| DEFAULT_HOST.to_string());
+    let port_str = std::env::var(PORT_ENV_VAR).unwrap_or_else(|_| DEFAULT_PORT.to_string());
     let port = port_str.parse::<u16>().context(format!("Invalid PORT value: {}", port_str))?;
     let bind_addr = format!("{}:{}", host, port);
 
