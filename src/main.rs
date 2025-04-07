@@ -24,7 +24,14 @@ async fn svg_to_png(
     body: Bytes,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Log entry details, including the query string if present
-    debug!(query = uri.query().unwrap_or(""), uri = %uri, "Processing svg_to_png request"); // Log uri here instead
+    debug!(query = uri.query().unwrap_or(""), uri = %uri, "Processing svg_to_png request");
+
+    // --- Input Validation ---
+    if body.is_empty() {
+        error!("Received empty request body");
+        return Err((StatusCode::BAD_REQUEST, "Request body cannot be empty".to_string()));
+    }
+    // --- End Input Validation ---
 
     // --- Manual DPI Parsing ---
     const DEFAULT_DPI: f32 = 96.0;
@@ -191,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check));
 
     // Start the server, using `?` and `context` for error handling
-    info!("Attempting to bind to {}", bind_addr);
+    debug!("Attempting to bind to {}", bind_addr);
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .context(format!("Failed to bind to address {}", bind_addr))?;
