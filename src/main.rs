@@ -1,8 +1,8 @@
 use axum::{
     body::Bytes,
-    http::{header, StatusCode, Uri}, // Changed to Uri for manual query parsing
+    http::{header, StatusCode, Uri},
     response::IntoResponse,
-    routing::post,
+    routing::{get, post}, // Add `get` for the health check route
     Router,
 };
 
@@ -116,12 +116,18 @@ async fn svg_to_png(
     ))
 }
 
+// Simple health check handler
+async fn health_check() -> StatusCode {
+    StatusCode::OK
+}
+
 // Main function to set up the Axum server
 #[tokio::main]
 async fn main() {
-    // Build the Axum router
+    // Build the Axum router with both routes
     let app = Router::new()
-        .route("/svg-to-png", post(svg_to_png));
+        .route("/svg-to-png", post(svg_to_png))
+        .route("/health", get(health_check)); // Add the health check route
 
     // Start the server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
