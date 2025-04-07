@@ -9,12 +9,13 @@ use tracing::{debug, error, info, instrument}; // Import tracing macros (removed
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 // --- Constants ---
-const HOST_ENV_VAR: &str = "HOST";
-const PORT_ENV_VAR: &str = "PORT";
+const HOST_ENV_VAR: &str = "SVG2PNG_HOST";
+const PORT_ENV_VAR: &str = "SVG2PNG_PORT";
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: &str = "3000";
 const DPI_QUERY_PARAM: &str = "dpi";
 const PNG_CONTENT_TYPE: &str = "image/png";
+const DEFAULT_DPI: f32 = 96.0;
 // --- End Constants ---
 
 // Handler to convert posted SVG to PNG, now accepting DPI query parameter via manual parsing
@@ -34,7 +35,6 @@ async fn svg_to_png(
     // --- End Input Validation ---
 
     // --- Manual DPI Parsing ---
-    const DEFAULT_DPI: f32 = 96.0;
     let mut requested_dpi = DEFAULT_DPI; // Start with default
 
     if let Some(query) = uri.query() {
@@ -210,9 +210,39 @@ async fn main() -> anyhow::Result<()> {
         address = %addr,
         "Server listening"
     );
-    axum::serve(listener, app)
-        .await
-        .context("Axum server failed")?;
+    // Setup graceful shutdown signal handling
+    let shutdown_signal = async {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+        };
 
-    Ok(()) // Indicate successful execution
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>(); // On non-unix, just wait for ctrl_c
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        info!("Shutdown signal received, starting graceful shutdown...");
+    };
+
+    // Run the server with graceful shutdown
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
+        .context("Axum server error")?; // Use context for server errors
+
+    info!("Server shut down gracefully.");
+    Ok(())
 }
