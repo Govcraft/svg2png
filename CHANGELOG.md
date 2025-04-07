@@ -1,0 +1,33 @@
+# CHANGELOG (svg2png)
+
+
+<a name="v0.1.2"></a>
+## [v0.1.2](https://github.com/Govcraft/svg2png/compare/v0.1.1...v0.1.2)
+
+> 2025-04-07
+
+
+<a name="v0.1.1"></a>
+## v0.1.1
+
+> 2025-04-07
+
+### Bug Fixes
+
+* **api:** prevent panic on empty request body
+* **render:** embed correct DPI metadata in PNG output
+* **render:** correct SVG rendering logic and dependencies
+
+### Code Refactoring
+
+* replace magic strings with constants
+* **main:** replace unwraps with anyhow error handling
+* **render:** use usvg::Options.dpi for scaling
+
+### Features
+
+* **api:** add /health endpoint
+* **deploy:** add Dockerfile for static MUSL build and scratch deployment
+* **render:** add DPI scaling via query parameter
+* **server:** implement graceful shutdown
+
