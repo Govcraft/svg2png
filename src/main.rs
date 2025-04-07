@@ -106,10 +106,28 @@ async fn svg_to_png(
     // Note: `usvg::Options::dpi` is not used directly as its effect on scaling wasn't
     // clear from documentation at the time of writing. Manual scaling via `resvg::render`
     // transform is used instead for explicit control.
-    // Explicitly set options, ensuring the default font family is set.
-    let mut opt = resvg::usvg::Options::default();
-    opt.font_family = "Times New Roman".to_string(); // Explicitly set default font
-    debug!(options = ?opt, "Parsing SVG data with default options");
+    // Create usvg options and explicitly load system fonts.
+    // This ensures fonts installed in the Docker container (like Times New Roman)
+    // are available to usvg.
+    let opt = resvg::usvg::Options {
+        // Keep other defaults, but initialize fontdb explicitly.
+        fontdb: {
+            let mut db = resvg::usvg::fontdb::Database::new();
+            // Load fonts installed on the system (e.g., via apt in Docker).
+            db.load_system_fonts();
+            // Set the default font family as a fallback.
+            db.set_serif_family("Liberation Serif"); // Use a common, likely available serif font as fallback.
+            // Explicitly wrap the database in an Arc for the Options struct.
+            std::sync::Arc::new(db)
+        },
+        ..resvg::usvg::Options::default()
+    };
+    // Note: We set the default font family in the database now,
+    // so setting opt.font_family is redundant if using db.set_serif_family.
+    // If you need a specific *overall* default regardless of generic families,
+    // you might still set opt.font_family = "Some Font Name".to_string();
+
+    debug!(options = ?opt, "Parsing SVG data with explicit font loading");
     let tree = resvg::usvg::Tree::from_data(&body, &opt).map_err(|e| {
         error!(error = %e, "Invalid SVG data received");
         (StatusCode::BAD_REQUEST, format!("Invalid SVG: {}", e))

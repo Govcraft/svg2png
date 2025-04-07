@@ -1,6 +1,7 @@
 .direnv/
 result
-
+output.png
+test.svg
 
 # Added by cargo
 

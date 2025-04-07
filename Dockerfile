@@ -49,10 +49,13 @@ WORKDIR /app
 RUN echo "deb http://deb.debian.org/debian bookworm contrib" > /etc/apt/sources.list.d/contrib.list && \
     apt-get update && \
     echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
-    apt-get install -y --no-install-recommends fontconfig ttf-mscorefonts-installer && \
+    apt-get install -y --no-install-recommends fontconfig ttf-mscorefonts-installer fonts-liberation2 && \
     apt-get clean && \
     fc-cache -fv && \
     rm -rf /var/lib/apt/lists/*
+
+# Ensure font directories and cache are readable by all users
+RUN chmod -R a+rX /usr/share/fonts/ /var/cache/fontconfig/
 
 # Create a non-root user and group
 RUN groupadd --gid 1001 appgroup && \
@@ -66,6 +69,8 @@ RUN chown -R appuser:appgroup /app
 
 # Switch to the non-root user
 USER appuser
+# Build font cache as the appuser to ensure it's available at runtime
+RUN fc-cache -fv
 
 # Expose the default port the application listens on
 EXPOSE 3000
@@ -75,5 +80,6 @@ ENV SVG2PNG_HOST=0.0.0.0
 ENV SVG2PNG_PORT=3000
 ENV RUST_LOG=info
 
+# Command to run the application binary
 # Command to run the application binary
 CMD ["./svg2png"]
