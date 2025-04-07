@@ -36,13 +36,35 @@ RUN touch src/main.rs && \
 
 # ---- Final Stage ----
 # Use a minimal scratch image
-FROM scratch
+# Use a minimal Debian image that includes fontconfig support
+FROM debian:bookworm-slim
 
 # Set the working directory
 WORKDIR /app
 
+# Install the Microsoft Core Fonts (includes Times New Roman)
+# Accept the EULA non-interactively
+# Clean up apt cache afterwards
+# Add contrib component to sources and update
+RUN echo "deb http://deb.debian.org/debian bookworm contrib" > /etc/apt/sources.list.d/contrib.list && \
+    apt-get update && \
+    echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
+    apt-get install -y --no-install-recommends ttf-mscorefonts-installer && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user and group
+RUN groupadd --gid 1001 appgroup && \
+    useradd --uid 1001 --gid 1001 --shell /bin/bash --create-home appuser
+
 # Copy the statically linked binary from the builder stage
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/svg2png .
+
+# Change ownership of the app directory and binary
+RUN chown -R appuser:appgroup /app
+
+# Switch to the non-root user
+USER appuser
 
 # Expose the default port the application listens on
 EXPOSE 3000
