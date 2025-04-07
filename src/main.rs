@@ -33,42 +33,33 @@ async fn svg_to_png(
     }
     // --- End Manual DPI Parsing ---
 
-    // Parse the SVG data from the request body
-    // Note: We are not using usvg::Options { dpi: ... } as its effect wasn't clear from docs.
-    // Manual scaling via transform is used instead.
-    let opt = resvg::usvg::Options::default();
+    // Create usvg options and set the DPI based on the parsed query parameter
+    let mut opt = resvg::usvg::Options::default();
+    opt.dpi = requested_dpi; // Set the DPI for usvg to handle unit conversions
+
+    // Parse the SVG data using the specified options
     let tree = resvg::usvg::Tree::from_data(&body, &opt)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid SVG: {}", e)))?;
 
-    // Calculate the scale factor based on the determined DPI
-    let scale = requested_dpi / DEFAULT_DPI; // DEFAULT_DPI is const 96.0
+    // Get the size of the tree (which should be affected by the DPI option)
+    let size = tree.size();
+    let width = size.width().ceil() as u32;
+    let height = size.height().ceil() as u32;
 
-    // Get the base size of the SVG tree
-    let base_size = tree.size();
-    let base_width = base_size.width();
-    let base_height = base_size.height();
-
-    // Calculate the target pixmap dimensions based on the scale factor
-    // Using ceil() ensures the pixmap is large enough for the scaled image
-    let target_width = (base_width * scale).ceil() as u32;
-    let target_height = (base_height * scale).ceil() as u32;
-
-    // Check for zero dimensions after scaling
-    if target_width == 0 || target_height == 0 {
+    // Check for zero dimensions (could happen with empty SVGs or extreme DPI)
+    if width == 0 || height == 0 {
         return Err((
             StatusCode::BAD_REQUEST,
-            "SVG results in zero width or height after scaling".to_string(),
+            "SVG results in zero width or height after DPI conversion".to_string(),
         ));
     }
 
-    // Create a pixmap with the target dimensions
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(target_width, target_height)
+    // Create a pixmap with the calculated dimensions
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
         .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "Failed to create pixmap".to_string()))?;
 
-    // Define the scaling transform
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-
-    // Render the SVG tree to the pixmap using the scaling transform.
+    // Render using the identity transform, as scaling is handled by usvg options
+    let transform = resvg::tiny_skia::Transform::identity();
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     // Encode the pixmap into a PNG byte buffer
