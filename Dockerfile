@@ -42,15 +42,16 @@ FROM debian:bookworm-slim
 # Set the working directory
 WORKDIR /app
 
-# Install the Microsoft Core Fonts (includes Times New Roman)
+# Install fontconfig and the Microsoft Core Fonts (includes Times New Roman)
 # Accept the EULA non-interactively
 # Clean up apt cache afterwards
 # Add contrib component to sources and update
 RUN echo "deb http://deb.debian.org/debian bookworm contrib" > /etc/apt/sources.list.d/contrib.list && \
     apt-get update && \
     echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
-    apt-get install -y --no-install-recommends ttf-mscorefonts-installer && \
+    apt-get install -y --no-install-recommends fontconfig ttf-mscorefonts-installer && \
     apt-get clean && \
+    fc-cache -fv && \
     rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group
