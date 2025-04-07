@@ -1,0 +1,229 @@
+# Workflow to build release binaries, generate changelog, and create a GitHub Release for svg2png
+
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on version tags like v1.0.0
+  workflow_dispatch: # Allows manual triggering
+    inputs:
+      version:
+        description: 'The version tag to use for the release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write # Needed for softprops/action-gh-release and committing changelog
+
+env:
+  CARGO_TERM_COLOR: always
+  # Use the binary name from Cargo.toml for consistency in asset naming
+  CRATE_NAME: svg2png
+
+jobs:
+  build_assets:
+    name: Build Asset (${{ matrix.platform.target }})
+    strategy:
+      fail-fast: false # Don't cancel other jobs if one fails
+      matrix:
+        platform:
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: svg2png # Binary name from Cargo.toml
+            asset_suffix: linux-x86_64
+          - release_for: macOS-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            bin: svg2png # Binary name from Cargo.toml
+            asset_suffix: macos-x86_64
+          - release_for: macOS-aarch64
+            os: macos-latest # Build arm on x86 runner
+            target: aarch64-apple-darwin
+            bin: svg2png # Binary name from Cargo.toml
+            asset_suffix: macos-aarch64
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: svg2png.exe # Binary name with .exe for Windows
+            asset_suffix: windows-x86_64.exe
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }} # Use target in cache key
+
+      # --- Build Binary ---
+      - name: Build binary using actions-rust-cross
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: "--release --verbose --bin ${{ env.CRATE_NAME }}" # Specify the binary to build
+          strip: true # Stripping is done by the action
+
+      # --- Install UPX ---
+      - name: Install UPX (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y upx-ucl
+
+      - name: Install UPX (macOS)
+        if: runner.os == 'macOS'
+        run: brew install upx
+
+      - name: Install UPX (Windows)
+        if: runner.os == 'Windows'
+        run: choco install upx --no-progress --yes
+
+      # --- Prepare Artifact (includes UPX compression) ---
+      - name: Prepare Artifact and Compress with UPX
+        id: artifact_details
+        shell: bash # Use bash for consistency across OSes where possible
+        run: |
+          BINARY_NAME="${{ matrix.platform.bin }}"
+          ASSET_NAME="${{ env.CRATE_NAME }}-${{ matrix.platform.asset_suffix }}"
+          # Adjust path based on OS for target directory
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            TARGET_DIR="target/${{ matrix.platform.target }}/release"
+            BINARY_PATH="$TARGET_DIR/$BINARY_NAME"
+          else
+            TARGET_DIR="target/${{ matrix.platform.target }}/release"
+            BINARY_PATH="$TARGET_DIR/$BINARY_NAME"
+          fi
+
+          echo "Target directory: $TARGET_DIR"
+          echo "Calculated binary path: $BINARY_PATH"
+          echo "Calculated asset name: $ASSET_NAME"
+
+          if [[ ! -f "$BINARY_PATH" ]]; then
+            echo "Error: Binary not found at $BINARY_PATH"
+            echo "Listing contents of $TARGET_DIR:"
+            ls -l "$TARGET_DIR" || echo "Could not list $TARGET_DIR"
+            exit 1
+          fi
+
+          # Compress the binary with UPX (skip on macOS)
+          if [[ "${{ runner.os }}" != "macOS" ]]; then
+            echo "Compressing binary with UPX..."
+            upx --best --lzma "$BINARY_PATH"
+          else
+            echo "Skipping UPX compression on macOS."
+          fi
+
+          # Rename binary to the desired asset name AFTER potential compression
+          # Ensure the target directory exists before moving (should exist, but belt-and-suspenders)
+          mkdir -p "$TARGET_DIR"
+          mv "$BINARY_PATH" "$TARGET_DIR/$ASSET_NAME"
+          echo "Renamed binary to $TARGET_DIR/$ASSET_NAME"
+
+          echo "asset_path=$TARGET_DIR/$ASSET_NAME" >> $GITHUB_OUTPUT
+          echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact_details.outputs.asset_name }}
+          path: ${{ steps.artifact_details.outputs.asset_path }}
+          if-no-files-found: error # Fail the workflow if the artifact wasn't found
+
+  release:
+    name: Create GitHub Release
+    needs: build_assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo for changelog generation
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0 # Needed for git-chglog to access full history
+          # Ensure we checkout the repo where the workflow runs, not a fork
+          repository: ${{ github.repository }}
+          # Use the token with write permissions
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up git-chglog
+        run: |
+          set -e
+          echo "Setting up git-chglog..."
+          mkdir -p ./.bin # Create a local bin directory if it doesn't exist
+          CHGLOG_TMP_DIR=$(mktemp -d)
+          wget https://github.com/git-chglog/git-chglog/releases/download/v0.15.4/git-chglog_0.15.4_linux_amd64.tar.gz -O "$CHGLOG_TMP_DIR/chglog.tar.gz"
+          tar -xvzf "$CHGLOG_TMP_DIR/chglog.tar.gz" -C ./.bin # Extract directly to .bin
+          rm -rf "$CHGLOG_TMP_DIR" # Clean up temp dir
+          echo "$PWD/.bin" >> $GITHUB_PATH # Add local bin to PATH for this job
+
+# Step removed as .chglog config and CHANGELOG.md are assumed to exist in the repo.
+
+      - name: Generate and Commit Changelog
+        run: |
+          set -e # Exit immediately if a command exits with a non-zero status.
+          echo "Generating full changelog for repository..."
+          # Use the git-chglog installed in ./.bin
+          git-chglog --output CHANGELOG.md
+
+          # Determine the tag for commit message/branch name
+          NEXT_TAG="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}"
+
+          echo "Configuring git user..."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Check if CHANGELOG.md has changes
+          if git diff --quiet CHANGELOG.md; then
+            echo "No changes detected in CHANGELOG.md. Skipping commit."
+          else
+            echo "Changes detected in CHANGELOG.md. Committing..."
+            # Fetch the latest main branch from origin to avoid conflicts
+            git fetch origin refs/heads/main
+
+            # Create a new branch based on the fetched origin/main
+            BRANCH_NAME="changelog-update-${NEXT_TAG//\//-}"
+            git checkout -b "$BRANCH_NAME" origin/main
+
+            # Add, commit the changelog to the new branch
+            git add CHANGELOG.md
+            git commit -m "chore(docs): update CHANGELOG for release $NEXT_TAG [skip ci]"
+
+            echo "Pushing changelog update to main branch..."
+            # Push the new local branch specifically to the remote *branch* main
+            git push origin "$BRANCH_NAME":refs/heads/main
+
+            # Clean up the temporary local branch
+            git checkout --detach
+            git branch -D "$BRANCH_NAME" || echo "Could not delete local branch $BRANCH_NAME"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/build # Download build artifacts into a subdirectory
+
+      - name: List downloaded artifacts for debugging
+        run: |
+          echo "Listing downloaded build artifacts:"
+          find artifacts/build -type f
+          echo "---"
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the tag from the event (push or dispatch input)
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+          # Generate release name from tag
+          name: Release ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+          # Use the generated CHANGELOG.md file directly for the release body
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false # Set to true if these are pre-releases
+          # Upload all files from all subdirectories within artifacts/build/*
+          # This pattern correctly handles the structure created by download-artifact@v4
+          files: artifacts/build/*/*
