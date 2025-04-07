@@ -1,7 +1,13 @@
 [package]
 name = "svg2png"
 version = "0.1.0"
-edition = "2024"
+edition = "2021" # Corrected edition to 2021 for stability
+authors = ["roland@govcraft.ai"]
+description = "A performant Rust microservice using Axum and resvg to easily convert SVG images to PNG format with adjustable DPI."
+repository = "https://github.com/Govcraft/svg2png"
+license = "MIT"
+keywords = ["svg", "png", "conversion", "web", "axum", "resvg", "image"]
+categories = ["web-programming::http-server", "multimedia::images"]
 
 [dependencies]
 axum = { version = "0.8.3", features = ["macros"] }
