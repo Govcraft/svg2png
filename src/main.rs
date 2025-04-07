@@ -121,16 +121,24 @@ async fn health_check() -> StatusCode {
     StatusCode::OK
 }
 
-// Main function to set up the Axum server
+use anyhow::Context; // Import anyhow context for better error messages
+
+// Main function now returns anyhow::Result for proper error handling
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     // Build the Axum router with both routes
     let app = Router::new()
         .route("/svg-to-png", post(svg_to_png))
         .route("/health", get(health_check)); // Add the health check route
 
-    // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Server running on http://0.0.0.0:3000");
-    axum::serve(listener, app).await.unwrap();
+    // Start the server, using `?` and `context` for error handling
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .context("Failed to bind to address")?; // Propagate error with context
+    println!("Server running on http://{}", listener.local_addr()?); // Get actual bound address
+    axum::serve(listener, app)
+        .await
+        .context("Axum server failed")?; // Propagate error with context
+
+    Ok(()) // Indicate successful execution
 }
