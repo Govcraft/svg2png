@@ -794,6 +794,7 @@ name = "svg2png"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "form_urlencoded",
  "resvg",
  "tokio",
 ]

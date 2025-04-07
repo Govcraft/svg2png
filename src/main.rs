@@ -1,38 +1,74 @@
 use axum::{
     body::Bytes,
-    http::{header, StatusCode},
+    http::{header, StatusCode, Uri}, // Changed to Uri for manual query parsing
     response::IntoResponse,
     routing::post,
     Router,
 };
 
-// Handler to convert posted SVG to PNG
-async fn svg_to_png(body: Bytes) -> Result<impl IntoResponse, (StatusCode, String)> {
+// Handler to convert posted SVG to PNG, now accepting DPI query parameter via manual parsing
+async fn svg_to_png(
+    uri: Uri, // Accept the full URI to parse the query string
+    body: Bytes,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // --- Manual DPI Parsing ---
+    const DEFAULT_DPI: f32 = 96.0;
+    let mut requested_dpi = DEFAULT_DPI; // Start with default
+
+    if let Some(query) = uri.query() {
+        // Iterate over query parameters using form_urlencoded
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            if key == "dpi" {
+                // Try to parse the value as f32
+                if let Ok(dpi_val) = value.parse::<f32>() {
+                    // Use the parsed value if it's positive
+                    if dpi_val > 0.0 {
+                        requested_dpi = dpi_val;
+                    }
+                }
+                // Found the dpi key, no need to check further params
+                break;
+            }
+        }
+    }
+    // --- End Manual DPI Parsing ---
+
     // Parse the SVG data from the request body
+    // Note: We are not using usvg::Options { dpi: ... } as its effect wasn't clear from docs.
+    // Manual scaling via transform is used instead.
     let opt = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(&body, &opt)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid SVG: {}", e)))?;
 
-    // Get the size of the SVG tree. The `size` field holds width and height.
-    // Convert width/height to u32 for Pixmap::new. Using ceil() ensures the pixmap is large enough.
-    // Added checks for zero dimensions to prevent panic in Pixmap::new.
-    let size = tree.size();
-    let width = size.width().ceil() as u32;
-    let height = size.height().ceil() as u32;
+    // Calculate the scale factor based on the determined DPI
+    let scale = requested_dpi / DEFAULT_DPI; // DEFAULT_DPI is const 96.0
 
-    if width == 0 || height == 0 {
-        return Err((StatusCode::BAD_REQUEST, "SVG has zero width or height".to_string()));
+    // Get the base size of the SVG tree
+    let base_size = tree.size();
+    let base_width = base_size.width();
+    let base_height = base_size.height();
+
+    // Calculate the target pixmap dimensions based on the scale factor
+    // Using ceil() ensures the pixmap is large enough for the scaled image
+    let target_width = (base_width * scale).ceil() as u32;
+    let target_height = (base_height * scale).ceil() as u32;
+
+    // Check for zero dimensions after scaling
+    if target_width == 0 || target_height == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "SVG results in zero width or height after scaling".to_string(),
+        ));
     }
 
-    // Create a pixmap with the SVG's dimensions
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
+    // Create a pixmap with the target dimensions
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(target_width, target_height)
         .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "Failed to create pixmap".to_string()))?;
 
-    // Define the identity transform (no scaling or translation needed as pixmap matches SVG size)
-    let transform = resvg::tiny_skia::Transform::identity();
+    // Define the scaling transform
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
 
-    // Render the SVG tree to the pixmap using the identity transform.
-    // Note: resvg::render returns () and panics on error. Consider adding catch_unwind for robustness.
+    // Render the SVG tree to the pixmap using the scaling transform.
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     // Encode the pixmap into a PNG byte buffer
