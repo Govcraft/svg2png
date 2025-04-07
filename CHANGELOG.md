@@ -1,6 +1,20 @@
 # CHANGELOG (svg2png)
 
 
+<a name="v0.1.4"></a>
+## [v0.1.4](https://github.com/Govcraft/svg2png/compare/v0.1.3...v0.1.4)
+
+> 2025-04-07
+
+### Bug Fixes
+
+* **docker:** install fontconfig and rebuild font cache
+
+### Code Refactoring
+
+* **usvg:** explicitly set default font family in options
+
+
 <a name="v0.1.3"></a>
 ## [v0.1.3](https://github.com/Govcraft/svg2png/compare/v0.1.2...v0.1.3)
 
