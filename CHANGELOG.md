@@ -1,6 +1,16 @@
 # CHANGELOG (svg2png)
 
 
+<a name="v0.1.3"></a>
+## [v0.1.3](https://github.com/Govcraft/svg2png/compare/v0.1.2...v0.1.3)
+
+> 2025-04-07
+
+### Bug Fixes
+
+* **docker:** install Times New Roman font and run as non-root user
+
+
 <a name="v0.1.2"></a>
 ## [v0.1.2](https://github.com/Govcraft/svg2png/compare/v0.1.1...v0.1.2)
 
