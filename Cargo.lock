@@ -795,6 +795,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "form_urlencoded",
+ "png",
  "resvg",
  "tokio",
 ]

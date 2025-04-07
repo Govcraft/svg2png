@@ -71,10 +71,43 @@ async fn svg_to_png(
     // Render the SVG tree to the pixmap using the scaling transform.
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
-    // Encode the pixmap into a PNG byte buffer
-    let png_buffer = pixmap
-        .encode_png()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to encode PNG: {}", e)))?;
+    // --- Manual PNG Encoding with DPI ---
+    let png_buffer = {
+        // Create a buffer to hold the PNG data
+        let mut buffer = Vec::new();
+        // Create a PNG encoder targeting the buffer
+        let mut encoder = png::Encoder::new(&mut buffer, target_width, target_height);
+        // Set color type and bit depth (RGBA 8-bit)
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        // Get a writer for the image data *before* writing custom chunks
+        let mut writer = encoder.write_header()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write PNG header: {}", e)))?;
+
+        // Calculate pixels per meter (1 inch = 0.0254 meters)
+        let ppm = (requested_dpi / 0.0254).round() as u32;
+
+        // Manually write the pHYs chunk (physical pixel dimensions)
+        // Data format: 4 bytes X ppm (big-endian), 4 bytes Y ppm (big-endian), 1 byte unit specifier (1 for meter)
+        let mut phys_data = [0u8; 9];
+        phys_data[0..4].copy_from_slice(&ppm.to_be_bytes());
+        phys_data[4..8].copy_from_slice(&ppm.to_be_bytes());
+        phys_data[8] = 1; // Unit is meters
+        writer.write_chunk(png::chunk::pHYs, &phys_data)
+             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write pHYs chunk: {}", e)))?;
+
+        // Write the pixel data from the pixmap
+        writer.write_image_data(pixmap.data())
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write PNG data: {}", e)))?;
+
+        // Drop the writer to finalize the PNG stream (important!)
+        drop(writer);
+
+        // Return the buffer containing the encoded PNG
+        buffer
+    };
+    // --- End Manual PNG Encoding ---
 
     // Return the PNG as a response with appropriate headers
     Ok((
