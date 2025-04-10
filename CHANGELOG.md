@@ -1,6 +1,16 @@
 # CHANGELOG (svg2png)
 
 
+<a name="v0.2.0"></a>
+## [v0.2.0](https://github.com/Govcraft/svg2png/compare/v0.1.5...v0.2.0)
+
+> 2025-04-10
+
+### Features
+
+* **api:** add PNG transparency endpoint using ImageMagick
+
+
 <a name="v0.1.5"></a>
 ## [v0.1.5](https://github.com/Govcraft/svg2png/compare/v0.1.4...v0.1.5)
 
