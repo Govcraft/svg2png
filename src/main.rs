@@ -248,7 +248,7 @@ const TEMP_INPUT_FILENAME: &str = "input.png";
 /// Output PNG filename within the temporary directory.
 const TEMP_OUTPUT_FILENAME: &str = "output_transparent.png";
 /// Fuzz factor for ImageMagick's floodfill.
-const IMAGE_MAGICK_FUZZ: &str = "10%";
+const IMAGE_MAGICK_FUZZ: &str = "5%";
 
 // The `instrument` macro automatically adds logging for function entry/exit.
 #[instrument(skip(body))]
