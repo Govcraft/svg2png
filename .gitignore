@@ -6,3 +6,5 @@ test.svg
 # Added by cargo
 
 /target
+test.png
+transparent.png
