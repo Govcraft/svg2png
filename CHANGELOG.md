@@ -1,6 +1,12 @@
 # CHANGELOG (svg2png)
 
 
+<a name="v0.2.1"></a>
+## [v0.2.1](https://github.com/Govcraft/svg2png/compare/v0.2.0...v0.2.1)
+
+> 2025-04-10
+
+
 <a name="v0.2.0"></a>
 ## [v0.2.0](https://github.com/Govcraft/svg2png/compare/v0.1.5...v0.2.0)
 
