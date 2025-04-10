@@ -22,6 +22,10 @@ use axum::{
 };
 use tracing::{debug, error, info, instrument};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tokio::fs;
+use tokio::process::Command;
+use tempfile::Builder as TempFileBuilder;
+// Removed unused import: use std::path::PathBuf;
 
 /// Environment variable name for the host address.
 const HOST_ENV_VAR: &str = "SVG2PNG_HOST";
@@ -238,6 +242,118 @@ async fn health_check() -> StatusCode {
     StatusCode::OK
 }
 
+
+/// Input PNG filename within the temporary directory.
+const TEMP_INPUT_FILENAME: &str = "input.png";
+/// Output PNG filename within the temporary directory.
+const TEMP_OUTPUT_FILENAME: &str = "output_transparent.png";
+/// Fuzz factor for ImageMagick's floodfill.
+const IMAGE_MAGICK_FUZZ: &str = "5%";
+
+// The `instrument` macro automatically adds logging for function entry/exit.
+#[instrument(skip(body))]
+/// Makes the background of a PNG image transparent using ImageMagick.
+///
+/// Takes a PNG image via POST request body. It samples the top-left pixel (0,0),
+/// then uses ImageMagick's `convert` command with `-floodfill` to make pixels
+/// of similar color (within a 5% fuzz factor) transparent.
+///
+/// Requires `imagemagick` to be installed and accessible in the system's PATH.
+///
+/// # Arguments
+///
+/// * `body` - The raw bytes of the input PNG image data.
+///
+/// # Returns
+///
+/// * `Ok(impl IntoResponse)` - On success, returns a response containing the modified PNG
+///   image data with a `Content-Type` header set to `image/png`.
+/// * `Err((StatusCode, String))` - On failure, returns an HTTP status code and an
+///   error message string. Possible errors include:
+///     - `400 Bad Request`: If the request body is empty.
+///     - `500 Internal Server Error`: If temporary file/directory creation fails,
+///       file I/O fails, or the `imagemagick` command fails.
+async fn png_to_transparent(
+    body: Bytes,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    debug!(body_len = body.len(), "Processing png_to_transparent request");
+
+    if body.is_empty() {
+        error!("Received empty request body");
+        return Err((StatusCode::BAD_REQUEST, "Request body cannot be empty".to_string()));
+    }
+
+    // Create a temporary directory to store input and output files.
+    // The directory and its contents are automatically removed when `temp_dir` goes out of scope.
+    let temp_dir = TempFileBuilder::new()
+        .prefix("png_transparency_")
+        .tempdir()
+        .map_err(|e| {
+            error!(error = %e, "Failed to create temporary directory");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create temporary directory".to_string())
+        })?;
+
+    let input_path = temp_dir.path().join(TEMP_INPUT_FILENAME);
+    let output_path = temp_dir.path().join(TEMP_OUTPUT_FILENAME);
+    debug!(input_path = %input_path.display(), output_path = %output_path.display(), "Created temporary file paths");
+
+    // Write the input PNG data to the temporary file.
+    fs::write(&input_path, &body).await.map_err(|e| {
+        error!(error = %e, path = %input_path.display(), "Failed to write temporary input file");
+        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write temporary input file".to_string())
+    })?;
+    debug!(path = %input_path.display(), "Wrote input PNG to temporary file");
+
+    // Construct and execute the ImageMagick command.
+    let cmd = "convert";
+    let args = [
+        input_path.to_str().unwrap(), // Path conversion should be safe here
+        "-fuzz",
+        IMAGE_MAGICK_FUZZ,
+        "-fill",
+        "none",
+        "-draw",
+        "color 0,0 floodfill", // Sample top-left pixel and floodfill with transparency
+        output_path.to_str().unwrap(),
+    ];
+
+    debug!(command = cmd, args = ?args, "Executing ImageMagick command");
+    let output = Command::new(cmd)
+        .args(args) // Clippy suggestion: remove needless borrow
+        .output()
+        .await
+        .map_err(|e| {
+            error!(error = %e, command = cmd, "Failed to execute ImageMagick command");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to execute '{}': {}", cmd, e))
+        })?;
+
+    // Check if ImageMagick command executed successfully.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(status = %output.status, stderr = %stderr, command = cmd, args = ?args, "ImageMagick command failed");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("ImageMagick command failed: {}", stderr),
+        ));
+    }
+    debug!(command = cmd, "ImageMagick command executed successfully");
+
+    // Read the resulting transparent PNG from the temporary output file.
+    let png_buffer = fs::read(&output_path).await.map_err(|e| {
+        error!(error = %e, path = %output_path.display(), "Failed to read temporary output file");
+        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read temporary output file".to_string())
+    })?;
+    debug!(path = %output_path.display(), bytes = png_buffer.len(), "Read output PNG from temporary file");
+
+    // The `temp_dir` automatically cleans up when dropped here.
+
+    // Return the PNG data.
+    Ok((
+        [(header::CONTENT_TYPE, PNG_CONTENT_TYPE)],
+        png_buffer,
+    ))
+}
+
 use anyhow::Context; // Provides the `context` method for easy error wrapping.
 
 // Use `anyhow::Result` for convenient error handling throughout the application setup.
@@ -281,7 +397,8 @@ async fn main() -> anyhow::Result<()> {
     // Define the application routes.
     let app = Router::new()
         .route("/svg-to-png", post(svg_to_png))
-        .route("/health", get(health_check));
+        .route("/health", get(health_check))
+        .route("/png-to-transparent", post(png_to_transparent)); // Add the new route
 
     // Bind the TCP listener to the specified address.
     debug!("Attempting to bind to {}", bind_addr);
@@ -330,4 +447,98 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Server shut down gracefully.");
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from outer scope.
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt; // for `oneshot` and `ready`
+    use image::{ImageBuffer, Rgba}; // Removed unused LumaA
+    use std::io::Cursor;
+
+    // Helper function to create the application router for testing.
+    // Initially, it will only contain existing routes.
+    // We'll add the new route here once the handler exists.
+    fn app() -> Router {
+        Router::new()
+            .route("/svg-to-png", post(svg_to_png))
+            .route("/health", get(health_check))
+            // Add the actual route for testing
+            .route("/png-to-transparent", post(png_to_transparent))
+    }
+
+    // Helper function to create a simple 2x2 red PNG.
+    fn create_test_png() -> Vec<u8> {
+        let mut img = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(2, 2);
+        for pixel in img.pixels_mut() {
+            *pixel = Rgba([255, 0, 0, 255]); // Solid red
+        }
+        let mut buffer = Cursor::new(Vec::new());
+        img.write_to(&mut buffer, image::ImageFormat::Png).expect("Failed to write test PNG");
+        buffer.into_inner()
+    }
+
+    #[tokio::test]
+    async fn test_png_to_transparent_success() {
+        // Arrange: Create the app and a test PNG
+        // Arrange: Create the app with the actual route
+        let test_app = app();
+        let png_data = create_test_png();
+
+        // Act: Send a POST request to the (currently missing) endpoint
+        let request = Request::builder()
+            .method("POST")
+            .uri("/png-to-transparent")
+            .header(header::CONTENT_TYPE, PNG_CONTENT_TYPE)
+            .body(Body::from(png_data))
+            .unwrap();
+
+        // We expect this to fail initially (404 Not Found) because the route isn't added yet.
+        // Once the route and handler are added, we'll update the assertions.
+        let response = test_app.oneshot(request).await.unwrap();
+
+        // Assertions for success case:
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(header::CONTENT_TYPE).unwrap(), PNG_CONTENT_TYPE);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+        // Verify the output PNG
+        let img_result = image::load_from_memory_with_format(&body_bytes, image::ImageFormat::Png);
+        assert!(img_result.is_ok(), "Failed to decode response PNG: {:?}", img_result.err());
+        let img = img_result.unwrap().to_rgba8();
+
+        // Check the top-left pixel (0, 0) - it should now be transparent (alpha = 0)
+        // ImageMagick floodfill starts from 0,0. Since our test image is solid red,
+        // the entire image should become transparent.
+        let top_left_pixel = img.get_pixel(0, 0);
+        assert_eq!(top_left_pixel[3], 0, "Top-left pixel alpha is not 0 (transparent)"); // Check alpha channel
+    }
+
+    #[tokio::test]
+    async fn test_png_to_transparent_empty_body() {
+        // Arrange
+        // Arrange: Create the app with the actual route
+        let test_app = app();
+
+        // Act: Send request with empty body
+        let request = Request::builder()
+            .method("POST")
+            .uri("/png-to-transparent")
+            .header(header::CONTENT_TYPE, PNG_CONTENT_TYPE)
+            .body(Body::empty())
+            .unwrap();
+
+        // Assertions for empty body case:
+        let response = test_app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // TODO: Add more tests for:
+    // - Invalid PNG data
+    // - Imagemagick command failure (e.g., if imagemagick is not installed or returns error)
+    // - Cases where the top-left pixel is already transparent?
 }

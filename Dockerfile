@@ -49,7 +49,8 @@ WORKDIR /app
 RUN echo "deb http://deb.debian.org/debian bookworm contrib" > /etc/apt/sources.list.d/contrib.list && \
     apt-get update && \
     echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
-    apt-get install -y --no-install-recommends fontconfig ttf-mscorefonts-installer fonts-liberation2 && \
+    # Install fontconfig, MS Core Fonts, Liberation fonts, and ImageMagick
+    apt-get install -y --no-install-recommends fontconfig ttf-mscorefonts-installer fonts-liberation2 imagemagick && \
     apt-get clean && \
     fc-cache -fv && \
     rm -rf /var/lib/apt/lists/*

@@ -18,3 +18,11 @@ png = "0.17" # For manual PNG encoding with DPI metadata
 anyhow = "1.0.97"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] } # Add env-filter feature
+tempfile = "3.10" # For creating temporary files/directories
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] } # For testing Axum services
+http = "1.1" # For constructing HTTP requests/responses in tests
+bytes = "1.6" # For handling byte streams in tests
+# tempfile = "3.10" # Moved to [dependencies]
+image = "0.25" # For decoding/inspecting PNGs in tests
